@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: psp-postgres
+    environment:
+      POSTGRES_DB: psp
+      POSTGRES_USER: psp
+      POSTGRES_PASSWORD: psp
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
