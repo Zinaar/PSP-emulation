@@ -32,6 +32,7 @@ src/
   - `4000` → Failed (webhook fires immediately)
 - **3DS expiry**: If the client doesn't complete 3DS verification within **5 minutes**, the PSP simulator automatically sends a `FAILED` webhook. This mirrors real-world PSP behavior where abandoned 3DS sessions expire.
 - **Safe transactions**: Webhook processing uses `BEGIN` → `SELECT ... FOR UPDATE` → `COMMIT` to prevent race conditions from concurrent webhook deliveries.
+- **PSP retry with exponential backoff**: Calls to the PSP are retried on transient failures (network errors, 5xx). Uses exponential backoff (default: 3 attempts, 500ms base delay doubling each retry). Client errors (4xx) are not retried. Configurable via `PSP_RETRY_ATTEMPTS` and `PSP_RETRY_DELAY_MS` environment variables.
 - **Colorized logging**: Uses `pino-pretty` for clean, NestJS-style console output in development.
 
 ## How to Start the App
@@ -41,20 +42,28 @@ src/
 - Node.js 18+
 - Docker & Docker Compose
 
-### Steps
+### Option A: Local Development
 
 ```bash
 # 1. Install dependencies
 npm install
 
 # 2. Start PostgreSQL
-docker-compose up -d
+docker-compose up postgres -d
 
 # 3. Run database migrations
 npm run migrate
 
 # 4. Start the server
 npm run dev
+```
+
+### Option B: Full Docker Stack
+
+Runs both the app and PostgreSQL in containers — no local Node.js required.
+
+```bash
+docker-compose up --build
 ```
 
 The server runs on `http://localhost:3000`. API docs are at `http://localhost:3000/docs`.

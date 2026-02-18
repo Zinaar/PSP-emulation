@@ -15,14 +15,23 @@ export class TransactionService {
     private repository: ITransactionRepository;
     private pspBaseUrl: string;
     private appBaseUrl: string;
+    private retryAttempts: number;
+    private retryDelayMs: number;
 
     constructor(
         repository: ITransactionRepository,
-        options: { pspBaseUrl: string; appBaseUrl: string },
+        options: {
+            pspBaseUrl: string;
+            appBaseUrl: string;
+            retryAttempts?: number;
+            retryDelayMs?: number;
+        },
     ) {
         this.repository = repository;
         this.pspBaseUrl = options.pspBaseUrl;
         this.appBaseUrl = options.appBaseUrl;
+        this.retryAttempts = options.retryAttempts ?? 3;
+        this.retryDelayMs = options.retryDelayMs ?? 500;
     }
 
     /**
@@ -31,7 +40,7 @@ export class TransactionService {
      * Flow:
      * 1. Generate internal UUID
      * 2. Persist transaction with CREATED status
-     * 3. Call PSP simulator
+     * 3. Call PSP simulator (with retry)
      * 4. Map PSP response to internal status
      * 5. Return transaction with current state
      */
@@ -106,20 +115,77 @@ export class TransactionService {
     }
 
     /**
-     * Calls the PSP simulator's transaction endpoint.
+     * Determines whether a failed PSP request should be retried.
+     * Only network errors and server errors (5xx) are retryable.
+     * Client errors (4xx) indicate permanent failures and should not be retried.
      */
-    private async callPsp(payload: Record<string, unknown>): Promise<PspResponse> {
-        const response = await fetch(`${this.pspBaseUrl}/transactions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(`PSP request failed with status ${response.status}: ${errorBody}`);
+    private isRetryable(error: unknown): boolean {
+        // Network errors (fetch throws TypeError on connection failure)
+        if (error instanceof TypeError) {
+            return true;
         }
 
-        return response.json() as Promise<PspResponse>;
+        // Server errors (5xx) — thrown by callPsp as PspRequestError
+        if (error instanceof Error && error.message.includes('status 5')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Sleeps for the specified number of milliseconds.
+     */
+    private sleep(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Calls the PSP simulator's transaction endpoint with exponential backoff retry.
+     * Retries on network errors and 5xx responses. 4xx errors are not retried.
+     *
+     * @param payload - Request body to send to the PSP
+     * @returns PSP response
+     * @throws Error after all retry attempts are exhausted
+     */
+    private async callPsp(payload: Record<string, unknown>): Promise<PspResponse> {
+        let lastError: Error | undefined;
+
+        for (let attempt = 1; attempt <= this.retryAttempts; attempt++) {
+            try {
+                const response = await fetch(`${this.pspBaseUrl}/transactions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    throw new Error(`PSP request failed with status ${response.status}: ${errorBody}`);
+                }
+
+                return response.json() as Promise<PspResponse>;
+            } catch (error) {
+                lastError = error instanceof Error ? error : new Error(String(error));
+
+                // Don't retry non-retryable errors (e.g. 4xx)
+                if (!this.isRetryable(error)) {
+                    throw lastError;
+                }
+
+                // Don't wait after the last attempt
+                if (attempt < this.retryAttempts) {
+                    const delay = this.retryDelayMs * Math.pow(2, attempt - 1);
+                    console.warn(
+                        `PSP call attempt ${attempt}/${this.retryAttempts} failed, retrying in ${delay}ms: ${lastError.message}`,
+                    );
+                    await this.sleep(delay);
+                }
+            }
+        }
+
+        throw new Error(
+            `PSP request failed after ${this.retryAttempts} attempts: ${lastError?.message}`,
+        );
     }
 }

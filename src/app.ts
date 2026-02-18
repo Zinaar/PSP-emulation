@@ -50,6 +50,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const transactionService = new TransactionService(transactionRepository, {
         pspBaseUrl: options.pspBaseUrl || config.pspBaseUrl,
         appBaseUrl: options.appBaseUrl || config.appBaseUrl,
+        retryAttempts: config.pspRetryAttempts,
+        retryDelayMs: config.pspRetryDelayMs,
     });
 
     const webhookService = new WebhookService(transactionRepository);

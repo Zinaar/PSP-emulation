@@ -12,6 +12,24 @@ services:
       - '5432:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U psp -d psp']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    container_name: psp-app
+    ports:
+      - '3000:3000'
+    environment:
+      DATABASE_URL: postgres://psp:psp@postgres:5432/psp
+      PSP_BASE_URL: http://localhost:3000/psp
+      APP_BASE_URL: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:
